@@ -1,0 +1,9 @@
+[project]
+name = "mission_data_organizer"
+version = "0.0.1"
+description = "Reorganise AUV post-mission output into a date/mission folder hierarchy."
+requires-python = ">=3.8"
+dependencies = ["python-dateutil"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

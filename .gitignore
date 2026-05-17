@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.organize_log/
+CLAUDE.md
+.claude/
