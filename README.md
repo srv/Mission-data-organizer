@@ -69,7 +69,7 @@ A stub anchor (4-KB header-only bag from an aborted `rosbag record`) cannot have
 | `sparus2_<sensor>_<TS>_<N>.bag` (camera / multibeam / sidescan / stereo_camera) | **Filename-match first** to the anchor with the closest filename TS, within ±1 s — these companions are siblings of the anchor by construction (same `rosbag record` launcher), but their filename TS can be ±1 s off when parallel process-start instants straddle a second boundary. Internal-time containment is used only as a fallback for split continuations (see next row). |
 | `sparus2_<sensor>_<NEW-TS>_<N>.bag` where `N > 0` (split continuation) | Filename TS differs from any anchor's. Falls through to **internal-time containment**: the bag's own `start_time` (UTC) must lie inside some mission's `[start, end]` window. |
 | `sparus2_basic_<TS>_<N>.bag` | Always at the date level (per-date), never inside a mission folder. |
-| `.xtf`, `.SDS`, `.s7k`, `*_bathy_data_raw`, `*_snippet_sidescan_raw`, `mission_report*`, `iquaview_server*` | Filename TS is parsed and **interpreted as `--local-tz`** (these are written by sensor PCs on Madrid local time), then compared against the bag's internal UTC `[start, end]` window. The comparison happens in UTC so a CEST filename and a UTC bag window match correctly. |
+| `.xtf`, `.SDS`, `.s7k`, `*_bathy_data_raw`, `*_snippet_sidescan_raw`, `mission_report*`, `iquaview_server*` | Filename TS is parsed and **interpreted as UTC**. Every driver that writes these files (mk_ii sidescan, Norbit multibeam, iquaview server) runs on the AUV's onboard computer itself, whose clock is UTC; the filename string therefore carries a UTC face. After parsing, the TS is compared against the bag's internal UTC `[start, end]` window — both sides UTC, match is unambiguous. |
 | `blackfly_s/<YYYY-MM-DD-HH-MM-SS>/` (whole folder) | Folder name TS is **interpreted as UTC** (the camera daemon runs on Orat, whose clock is UTC). Matched against bag internal UTC windows the same way. |
 | `bms_*_<HEX>_<YYYY_MM_DD>.{log,csv}` | Date-only (no time). Always at the date level. |
 
@@ -104,13 +104,13 @@ Three independent time sources flow through the script. Distinguishing them is t
 |---|---|---|
 | Bag-internal timestamps (Unix epoch inside the `.bag` file) | **UTC** (always — Unix time is UTC by definition) | Read as UTC-aware `datetime` via `datetime.fromtimestamp(epoch, tz=timezone.utc)`. Independent of the host's clock. |
 | Bag filenames (anchor, sensor companions, `sparus2_basic_*`, `blackfly_s/<TS>/`) | **UTC** | All recorded on the AUV's onboard computer (Orat), whose system clock is UTC by deployment policy. Attached as `tzinfo=timezone.utc` at parse time. Hardcoded — no CLI option. |
-| Non-bag sensor filenames (`.s7k`, `mission_reports/*`, `iquaview_server/*`, `mk_ii/*`) | **`--local-tz`** (default `Europe/Madrid`) | Written by sensor PCs whose clocks are on the team's local time. Attached as `tzinfo=<--local-tz>` at parse time. |
+| Non-bag sensor filenames (`.s7k`, `mission_reports/*`, `iquaview_server/*`, `mk_ii/*`) | **UTC** | The driver for every non-bag source runs on the AUV's onboard computer (Orat), whose clock is UTC. Attached as `tzinfo=timezone.utc` at parse time, then converted to `--local-tz` for the demote-path date folder rendering. |
 
 Comparisons across these sources happen between TZ-aware datetimes; Python normalises to UTC internally so the script's behaviour does not depend on the host's TZ setting.
 
 **Mission folder names are rendered in `--local-tz`**: a mission whose anchor filename is `sparus2_2026-05-04-09-03-30_0.bag` (`09:03:30` UTC) lands under `2026_05_04/11_03_30/` when run with the default `--local-tz=Europe/Madrid` (CEST is UTC+2 in May). This matches the team's existing manual organising convention. To preserve the UTC face of the filename in the folder name instead, pass `--local-tz=UTC`.
 
-**The `--local-tz` option only affects non-bag filenames and folder rendering.** Bag filenames are always interpreted as UTC; bag-internal timestamps are always UTC. So a different `--local-tz` changes how date / mission folders are *named* and how `.s7k`-style filenames are *interpreted*, but never changes the underlying time the script reasons with.
+**The `--local-tz` option only affects folder rendering.** Every input timestamp the script reads — bag filenames, bag-internal timestamps, and non-bag sensor filenames — is UTC, on this AUV. `--local-tz` is purely the rendering TZ for the date and mission folder names. So a different `--local-tz` changes how date / mission folders are *named*, but never changes the underlying time the script reasons with.
 
 ## What can go wrong
 

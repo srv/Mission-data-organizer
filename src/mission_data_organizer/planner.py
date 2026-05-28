@@ -9,9 +9,14 @@ Validation rules:
 Time-handling contract (see ``mission_catalog`` and ``classifier`` for the
 deeper rationale):
     - Bag filenames (Orat-recorded) are attached as UTC.
-    - Non-bag sensor filenames (sonar PC, iquaview PC, mk_ii PC) are
-      attached as ``local_tz`` (the team's local time, default
-      Europe/Madrid).
+    - Non-bag sensor filenames are also attached as UTC. The drivers for
+      every non-bag source (Norbit multibeam → ``.s7k``, mk_ii sidescan →
+      ``.xtf``, iquaview server → ``mission_report.md`` /
+      ``iquaview_server.log``) run on Orat itself, so the filename TS
+      string is whatever Orat's clock said at write time — and Orat is
+      UTC. The UTC-aware datetime is then converted to ``local_tz`` (the
+      team's local time, default Europe/Madrid) so the demote-path date
+      folder renders in local time, matching the team's convention.
     - Bag-internal timestamps are UTC-aware out of ``bag_inspector``.
     - All comparisons happen between TZ-aware datetimes; Python normalizes
       to UTC internally so the script's behavior is host-TZ-independent.
@@ -144,7 +149,7 @@ def build_plan(
                     f"Cannot parse timestamp from {sf.path.name}, skipping"
                 )
                 continue
-            ts_local = ts_naive.replace(tzinfo=local_tz)
+            ts_local = ts_naive.replace(tzinfo=timezone.utc).astimezone(local_tz)
             moves.append(
                 assign_per_mission(sf.path, ts_local, catalog, bags_root)
             )
@@ -156,7 +161,7 @@ def build_plan(
                     f"Cannot parse timestamp from {sf.path.name}, skipping"
                 )
                 continue
-            ts_local = ts_naive.replace(tzinfo=local_tz)
+            ts_local = ts_naive.replace(tzinfo=timezone.utc).astimezone(local_tz)
             moves.append(assign_per_date(sf.path, ts_local, bags_root))
 
     # ---- validation ----
