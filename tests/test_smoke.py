@@ -47,12 +47,14 @@ def test_build_plan_produces_expected_layout(generated):
     assert by_src["sparus2_multibeam_2026-05-04-09-03-31_0.bag"] == m1 / "sparus2_multibeam_2026-05-04-09-03-31_0.bag"
     assert by_src["sparus2_sidescan_2026-05-04-09-03-30_0.bag"] == m1 / "sparus2_sidescan_2026-05-04-09-03-30_0.bag"
     assert by_src["sparus2_stereo_camera_2026-05-04-09-03-30_0.bag"] == m1 / "sparus2_stereo_camera_2026-05-04-09-03-30_0.bag"
-    # Mission 1 sensor logs
-    assert by_src["2026-05-04_09-03-31_0.xtf"] == m1 / "2026-05-04_09-03-31_0.xtf"
-    assert by_src["2026-05-04_09-04-00_0.SDS"] == m1 / "2026-05-04_09-04-00_0.SDS"
-    assert by_src["2026-05-04_09-03-32_0.s7k"] == m1 / "2026-05-04_09-03-32_0.s7k"
-    assert by_src["2026-05-04_09-03-32_bathy_data_raw"] == m1 / "2026-05-04_09-03-32_bathy_data_raw"
-    assert by_src["2026-05-04_09-03-32_snippet_sidescan_raw"] == m1 / "2026-05-04_09-03-32_snippet_sidescan_raw"
+    # Mission 1 sensor logs. Native sonar recordings (mk_ii sidescan,
+    # Norbit multibeam) land under the raw/ subfolder; the mission report and
+    # iquaview server log stay at the mission root.
+    assert by_src["2026-05-04_09-03-31_0.xtf"] == m1 / "raw" / "2026-05-04_09-03-31_0.xtf"
+    assert by_src["2026-05-04_09-04-00_0.SDS"] == m1 / "raw" / "2026-05-04_09-04-00_0.SDS"
+    assert by_src["2026-05-04_09-03-32_0.s7k"] == m1 / "raw" / "2026-05-04_09-03-32_0.s7k"
+    assert by_src["2026-05-04_09-03-32_bathy_data_raw"] == m1 / "raw" / "2026-05-04_09-03-32_bathy_data_raw"
+    assert by_src["2026-05-04_09-03-32_snippet_sidescan_raw"] == m1 / "raw" / "2026-05-04_09-03-32_snippet_sidescan_raw"
     assert by_src["2026-05-04_09-03-30_mission_report.md"] == m1 / "2026-05-04_09-03-30_mission_report.md"
     assert by_src["20260504_090330_iquaview_server.log"] == m1 / "20260504_090330_iquaview_server.log"
     # blackfly_s folder for mission 1 (whole folder moves)
@@ -66,9 +68,9 @@ def test_build_plan_produces_expected_layout(generated):
     # Stereo split (different filename time, but its internal start_time
     # falls inside mission 2's [start, end]) — must land in mission 2.
     assert by_src["sparus2_stereo_camera_2026-05-04-10-52-00_1.bag"] == m2 / "sparus2_stereo_camera_2026-05-04-10-52-00_1.bag"
-    # Mission 2 sensor logs
-    assert by_src["2026-05-04_10-51-00_0.xtf"] == m2 / "2026-05-04_10-51-00_0.xtf"
-    assert by_src["2026-05-04_10-51-30_0.s7k"] == m2 / "2026-05-04_10-51-30_0.s7k"
+    # Mission 2 sensor logs — sonar under raw/, report at the mission root.
+    assert by_src["2026-05-04_10-51-00_0.xtf"] == m2 / "raw" / "2026-05-04_10-51-00_0.xtf"
+    assert by_src["2026-05-04_10-51-30_0.s7k"] == m2 / "raw" / "2026-05-04_10-51-30_0.s7k"
     assert by_src["2026-05-04_10-50-33_mission_report.md"] == m2 / "2026-05-04_10-50-33_mission_report.md"
 
     # --- Per-date items (basic bags, emus_bms) ---

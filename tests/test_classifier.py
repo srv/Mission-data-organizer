@@ -98,6 +98,119 @@ def test_per_mission_overlap_uses_first_match(tmp_path):
     assert a.dst.parent.name == "09_00_00"
 
 
+# --- mission_subdir (raw/ grouping for native sonar — todo #16) ---
+
+def test_per_mission_subdir_inserted_on_match(tmp_path, catalog):
+    """``mission_subdir`` is inserted between the mission folder and the
+    filename when a mission matches (used to group native sonar under raw/)."""
+    src = tmp_path / "2026-05-04_09-03-32_0.s7k"
+    a = assign_per_mission(
+        src, datetime(2026, 5, 4, 9, 3, 32, tzinfo=UTC), catalog, tmp_path,
+        mission_subdir="raw",
+    )
+    assert a.dst == tmp_path / "2026_05_04" / "09_03_30" / "raw" / src.name
+    assert a.note is None
+
+
+def test_per_mission_rejects_non_component_subdir(tmp_path, catalog):
+    """``mission_subdir`` is joined into the destination path; a separator,
+    absolute, or empty value would relocate the file outside the mission
+    folder, so it is rejected loudly (stop execution, not silent)."""
+    src = tmp_path / "2026-05-04_09-03-32_0.s7k"
+    ts = datetime(2026, 5, 4, 9, 3, 32, tzinfo=UTC)
+    for bad in ("a/b", "/abs", "", "sub/raw"):
+        with pytest.raises(ValueError):
+            assign_per_mission(
+                src, ts, catalog, tmp_path, mission_subdir=bad
+            )
+
+
+def test_per_mission_subdir_not_applied_on_demote(tmp_path, catalog):
+    """A subfolder is a per-mission concept: a demoted file lands at the day
+    root, never under ``<date>/raw/``."""
+    src = tmp_path / "2026-05-04_14-00-00_0.s7k"
+    a = assign_per_mission(
+        src, datetime(2026, 5, 4, 14, 0, 0, tzinfo=UTC), catalog, tmp_path,
+        mission_subdir="raw",
+    )
+    assert a.dst == tmp_path / "2026_05_04" / src.name
+    assert a.note is not None and "demoted" in a.note
+
+
+# --- mission-window boundary tolerance (todo #12) ---
+
+def test_per_mission_window_tolerance_rescues_boundary_file(tmp_path, catalog):
+    """A sensor file arriving just before a real mission's internal start (the
+    gap between recording-process start and first-message arrival) is pulled
+    into that mission rather than demoted. Shown together with raw/ grouping."""
+    # Mission 1 starts at 09:03:30; this .s7k is 1.5 s earlier — inside the 2 s
+    # tolerance, so it must land in mission 1's raw/ folder, not at day root.
+    src = tmp_path / "2026-05-04_09-03-28_0.s7k"
+    ts = datetime(2026, 5, 4, 9, 3, 28, 500000, tzinfo=UTC)
+    a = assign_per_mission(src, ts, catalog, tmp_path, mission_subdir="raw")
+    assert a.dst == tmp_path / "2026_05_04" / "09_03_30" / "raw" / src.name
+    assert a.note is None
+
+
+def test_per_mission_window_tolerance_is_symmetric(tmp_path, catalog):
+    """The tolerance widens both ends — a file just after the internal end
+    still lands in the mission."""
+    # Mission 1 ends at 09:12:00; 1.5 s later is still within tolerance.
+    src = tmp_path / "2026-05-04_09-12-01_0.s7k"
+    ts = datetime(2026, 5, 4, 9, 12, 1, 500000, tzinfo=UTC)
+    a = assign_per_mission(src, ts, catalog, tmp_path)
+    assert a.dst.parent.name == "09_03_30"
+    assert a.note is None
+
+
+def test_per_mission_beyond_tolerance_still_demoted(tmp_path, catalog):
+    """A file well outside the window (beyond the tolerance) is still demoted."""
+    # 5 s before mission 1's start — outside the 2 s tolerance.
+    src = tmp_path / "2026-05-04_09-03-25_0.s7k"
+    ts = datetime(2026, 5, 4, 9, 3, 25, tzinfo=UTC)
+    a = assign_per_mission(src, ts, catalog, tmp_path, mission_subdir="raw")
+    assert a.dst == tmp_path / "2026_05_04" / src.name
+    assert a.note is not None and "demoted" in a.note
+
+
+def _stub_catalog(tmp_path):
+    """A single stub mission: zero-width window (start == end == filename TS),
+    as built by ``build_catalog`` for header-only / aborted anchors."""
+    stub_ts = datetime(2026, 5, 4, 9, 3, 30, tzinfo=UTC)
+    return stub_ts, [
+        Mission(
+            date=datetime(2026, 5, 4, tzinfo=UTC),
+            folder_name="09_03_30",
+            filename_ts=stub_ts,
+            start=stub_ts,
+            end=stub_ts,
+            anchor_path=tmp_path / "sparus2_2026-05-04-09-03-30_0.bag",
+        ),
+    ]
+
+
+def test_per_mission_stub_window_not_widened_by_tolerance(tmp_path):
+    """Stub anchors keep their exact zero-width window — a file 1 s away from
+    the stub TS is NOT captured, so aborted-mission behaviour is unchanged
+    (latent #6)."""
+    stub_ts, cat = _stub_catalog(tmp_path)
+    src = tmp_path / "2026-05-04_09-03-31_0.s7k"
+    ts = datetime(2026, 5, 4, 9, 3, 31, tzinfo=UTC)  # 1 s after the stub TS
+    a = assign_per_mission(src, ts, cat, tmp_path, mission_subdir="raw")
+    assert a.dst == tmp_path / "2026_05_04" / src.name  # demoted, no raw/
+    assert a.note is not None and "demoted" in a.note
+
+
+def test_per_mission_stub_window_exact_match_still_binds(tmp_path):
+    """At exactly the stub's TS the file still binds to the stub mission
+    (unchanged zero-width behaviour)."""
+    stub_ts, cat = _stub_catalog(tmp_path)
+    src = tmp_path / "2026-05-04_09-03-30_0.s7k"
+    a = assign_per_mission(src, stub_ts, cat, tmp_path, mission_subdir="raw")
+    assert a.dst == tmp_path / "2026_05_04" / "09_03_30" / "raw" / src.name
+    assert a.note is None
+
+
 def test_per_date(tmp_path):
     src = tmp_path / "bms_events_00004CFB_2026_05_04.log"
     a = assign_per_date(src, datetime(2026, 5, 4, tzinfo=UTC), tmp_path)

@@ -15,7 +15,7 @@ Time-handling contract:
       datetime as given — callers wanting a local-TZ date folder must pass
       a local-TZ-aware datetime.
 """
-from datetime import datetime, timezone, tzinfo
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import List, NamedTuple, Optional, Tuple
 
@@ -49,6 +49,16 @@ DEMOTED_OUTSIDE_MISSION = "demoted: timestamp outside any mission"
 COMPANION_FILENAME_TS_TOLERANCE_S = 1.0
 
 
+# Symmetric tolerance applied to the bag-internal mission window when placing
+# non-bag sensor files. A sensor recording can begin up to ~1 s before the
+# bag's first message: the bag's filename TS marks when ``rosbag record``
+# *started*, while the window's ``start`` is when the first message *arrived*.
+# Files in that gap would otherwise be demoted to the day root. Real missions
+# are minutes apart, so this tolerance cannot bind a file to a neighbour. Only
+# applied to real (non-stub) windows — see :func:`assign_per_mission`.
+MISSION_WINDOW_TOLERANCE_S = 2.0
+
+
 def canonicalize_bag_name(name: str) -> Tuple[str, bool]:
     """Strip the ``.active`` suffix from a ``.bag.active`` file.
 
@@ -71,10 +81,11 @@ def assign_per_mission(
     bags_root: Path,
     dst_name: Optional[str] = None,
     extra_note: Optional[str] = None,
+    mission_subdir: Optional[str] = None,
 ) -> Assignment:
-    """Find the mission whose ``[start, end]`` contains ``src_timestamp`` and
-    return the corresponding :class:`Assignment` to
-    ``<bags-root>/YYYY_MM_DD/HH_MM_SS/<dst_name or src.name>``.
+    """Find the mission whose window contains ``src_timestamp`` and return the
+    corresponding :class:`Assignment` to
+    ``<bags-root>/YYYY_MM_DD/HH_MM_SS/[<mission_subdir>/]<dst_name or src.name>``.
 
     ``src_timestamp`` and the catalog's mission windows must agree on
     TZ-awareness so Python's comparison is unambiguous. The recommended
@@ -82,20 +93,49 @@ def assign_per_mission(
     TZ-aware in whatever zone is natural at the call site — comparison
     across zones is fine because Python normalizes aware datetimes to UTC.
 
+    The window is widened by :data:`MISSION_WINDOW_TOLERANCE_S` on both ends,
+    but only for missions with a real (non-zero-width) internal window. Stub
+    anchors (``start == end``, header-only/aborted bags) keep their exact
+    zero-width window, so the tolerance never inflates them.
+
+    ``mission_subdir``, when given, is inserted between the mission folder and
+    the filename **only on a match** (e.g. ``"raw"`` for native sonar files).
+    It is never applied to the demote path — a subfolder is a per-mission
+    concept.
+
     If no mission matches, the file is **demoted** to per-date treatment:
     target becomes ``<bags-root>/YYYY_MM_DD/<dst_name or src.name>`` (the
     date folder is rendered from ``src_timestamp.strftime``, so callers who
     want a local-TZ date should pass a local-TZ-aware datetime).
     """
+    if mission_subdir is not None and (
+        mission_subdir != Path(mission_subdir).name or not mission_subdir
+    ):
+        # mission_subdir is joined into the destination path; a separator or an
+        # absolute/empty value would silently relocate the file outside the
+        # mission folder. Callers pass a hardcoded single component ("raw"); a
+        # bad value is a programming error and must stop, not pass silently.
+        raise ValueError(
+            f"mission_subdir must be a single path component, got {mission_subdir!r}"
+        )
     name = dst_name or src.name
+    tol = timedelta(seconds=MISSION_WINDOW_TOLERANCE_S)
     for mission in catalog:
-        if mission.start <= src_timestamp <= mission.end:
-            dst = (
-                bags_root
-                / date_folder_name(mission.date)
-                / mission.folder_name
-                / name
-            )
+        lo, hi = mission.start, mission.end
+        # A real (non-stub) window has end > start; widen it by the boundary
+        # tolerance. Stub anchors carry a zero-width window (start == end ==
+        # filename_ts; mission_catalog.build_catalog) and are matched exactly.
+        # A genuine single-message mission also has start == end and is thus
+        # deliberately treated as a stub here — such a recording is effectively
+        # aborted, so demoting a boundary file near it (rather than widening) is
+        # the safe behaviour.
+        if hi > lo:
+            lo, hi = lo - tol, hi + tol
+        if lo <= src_timestamp <= hi:
+            dst = bags_root / date_folder_name(mission.date) / mission.folder_name
+            if mission_subdir:
+                dst = dst / mission_subdir
+            dst = dst / name
             return Assignment(src=src, dst=dst, note=extra_note)
     # No match — demote to date level
     dst = bags_root / date_folder_name(src_timestamp) / name

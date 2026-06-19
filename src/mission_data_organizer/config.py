@@ -18,6 +18,14 @@ LOG_SOURCES_PER_MISSION = (
     "norbit_wbms_multibeam",
 )
 
+# Per-mission log sources whose files are native sonar recordings (Norbit
+# multibeam, mk_ii sidescan). Their files are grouped under a raw/ subfolder
+# inside the mission folder, leaving derived products at the mission root.
+RAW_NATIVE_SOURCES = (
+    "norbit_wbms_multibeam",
+    "mk_ii",
+)
+
 # Subdirectories under <logs-root> whose contents are filed per date (no time).
 LOG_SOURCES_PER_DATE = (
     "emus_bms",

@@ -18,14 +18,15 @@ After every mission, the vehicle drops bagfiles into `/home/user/bags/` and per-
 │       ├── sparus2_multibeam_*.bag
 │       ├── sparus2_sidescan_*.bag
 │       ├── sparus2_stereo_camera_*_{0,1,...}.bag       # stereo splits (multiple parts share the mission)
-│       ├── *.xtf, *.SDS                         # sidescan files from /home/user/logs/mk_ii/
-│       ├── *.s7k                                # multibeam files from /home/user/logs/norbit_wbms_multibeam/
-│       ├── *_bathy_data_raw                     # multibeam raw siblings (no extension), same source
-│       ├── *_snippet_sidescan_raw
-│       ├── *_water_column_raw
 │       ├── YYYY-MM-DD_HH-MM-SS_mission_report.md       # from /home/user/logs/mission_reports/
 │       ├── YYYYMMDD_HHMMSS_iquaview_server.log         # from /home/user/logs/iquaview_server/
-│       └── YYYY-MM-DD-HH-MM-SS/                 # whole stereo-image folder from /home/user/logs/blackfly_s/
+│       ├── YYYY-MM-DD-HH-MM-SS/                 # whole stereo-image folder from /home/user/logs/blackfly_s/
+│       └── raw/                                 # native sonar recordings, grouped together
+│           ├── *.xtf, *.SDS                     # sidescan files from /home/user/logs/mk_ii/
+│           ├── *.s7k                            # multibeam files from /home/user/logs/norbit_wbms_multibeam/
+│           ├── *_bathy_data_raw                 # multibeam raw siblings (no extension), same source
+│           ├── *_snippet_sidescan_raw
+│           └── *_water_column_raw
 └── .organize_log/<run-timestamp>.log            # audit trail of every run
 ```
 
@@ -41,10 +42,12 @@ After every mission, the vehicle drops bagfiles into `/home/user/bags/` and per-
 | `/home/user/logs/emus_bms/bms_*_<HEX>_YYYY_MM_DD.{log,csv}` | per-date | date folder |
 | `/home/user/logs/iquaview_server/YYYYMMDD_HHMMSS_*.log` | per-mission | mission folder |
 | `/home/user/logs/mission_reports/YYYY-MM-DD_HH-MM-SS_*.md` | per-mission | mission folder |
-| `/home/user/logs/mk_ii/*` (`.xtf`, `.SDS`, prefix `YYYY-MM-DD_HH-MM-SS_N`) | per-mission | mission folder |
-| `/home/user/logs/norbit_wbms_multibeam/*` (every file regardless of extension; prefix `YYYY-MM-DD_HH-MM-SS_*`) | per-mission | mission folder |
+| `/home/user/logs/mk_ii/*` (`.xtf`, `.SDS`, prefix `YYYY-MM-DD_HH-MM-SS_N`) | per-mission | mission folder, under `raw/` |
+| `/home/user/logs/norbit_wbms_multibeam/*` (every file regardless of extension; prefix `YYYY-MM-DD_HH-MM-SS_*`) | per-mission | mission folder, under `raw/` |
 | `/home/user/logs/cola2_log/shutdown_logger.txt` | continuous | **out of scope — never touched** |
 | `/home/user/logs/flir_spinnaker_camera/`, `/home/user/logs/flir_spinnaker_stereo_camera/` | empty | nothing to do |
+
+The native sonar recordings — everything from `mk_ii/` and `norbit_wbms_multibeam/` — are grouped together under a `raw/` subfolder inside each mission folder, keeping the mission root for the bags, the mission report, and any later-derived products. The ROS bags are never moved into `raw/`.
 
 ## How sensor data is paired with missions
 
@@ -69,7 +72,7 @@ A stub anchor (4-KB header-only bag from an aborted `rosbag record`) cannot have
 | `sparus2_<sensor>_<TS>_<N>.bag` (camera / multibeam / sidescan / stereo_camera) | **Filename-match first** to the anchor with the closest filename TS, within ±1 s — these companions are siblings of the anchor by construction (same `rosbag record` launcher), but their filename TS can be ±1 s off when parallel process-start instants straddle a second boundary. Internal-time containment is used only as a fallback for split continuations (see next row). |
 | `sparus2_<sensor>_<NEW-TS>_<N>.bag` where `N > 0` (split continuation) | Filename TS differs from any anchor's. Falls through to **internal-time containment**: the bag's own `start_time` (UTC) must lie inside some mission's `[start, end]` window. |
 | `sparus2_basic_<TS>_<N>.bag` | Always at the date level (per-date), never inside a mission folder. |
-| `.xtf`, `.SDS`, `.s7k`, `*_bathy_data_raw`, `*_snippet_sidescan_raw`, `mission_report*`, `iquaview_server*` | Filename TS is parsed and **interpreted as UTC**. Every driver that writes these files (mk_ii sidescan, Norbit multibeam, iquaview server) runs on the AUV's onboard computer itself, whose clock is UTC; the filename string therefore carries a UTC face. After parsing, the TS is compared against the bag's internal UTC `[start, end]` window — both sides UTC, match is unambiguous. |
+| `.xtf`, `.SDS`, `.s7k`, `*_bathy_data_raw`, `*_snippet_sidescan_raw`, `mission_report*`, `iquaview_server*` | Filename TS is parsed and **interpreted as UTC**. Every driver that writes these files (mk_ii sidescan, Norbit multibeam, iquaview server) runs on the AUV's onboard computer itself, whose clock is UTC; the filename string therefore carries a UTC face. After parsing, the TS is compared against the bag's internal UTC `[start, end]` window — both sides UTC, match is unambiguous. The window is matched with a small symmetric tolerance (≈2 s) for real missions, so a sonar file written in the brief gap between `rosbag record` starting and the bag's first recorded message still pairs with its mission rather than being demoted. The sonar files (mk_ii, Norbit) land under the mission's `raw/` subfolder; the mission report and iquaview log stay at the mission root. |
 | `blackfly_s/<YYYY-MM-DD-HH-MM-SS>/` (whole folder) | Folder name TS is **interpreted as UTC** (the camera daemon runs on Orat, whose clock is UTC). Matched against bag internal UTC windows the same way. |
 | `bms_*_<HEX>_<YYYY_MM_DD>.{log,csv}` | Date-only (no time). Always at the date level. |
 

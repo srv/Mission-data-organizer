@@ -37,6 +37,7 @@ from .classifier import (
     assign_per_mission,
     canonicalize_bag_name,
 )
+from .config import RAW_NATIVE_SOURCES
 from .mission_catalog import build_catalog
 from .source_walker import walk_bags_root, walk_logs_root
 from .timestamp_parser import parse_any, parse_bag_timestamp
@@ -150,8 +151,17 @@ def build_plan(
                 )
                 continue
             ts_local = ts_naive.replace(tzinfo=timezone.utc).astimezone(local_tz)
+            # Native sonar recordings (Norbit multibeam, mk_ii sidescan) are
+            # grouped under a raw/ subfolder inside the mission folder; every
+            # other per-mission source stays at the mission root.
+            mission_subdir = (
+                "raw" if sf.path.parent.name in RAW_NATIVE_SOURCES else None
+            )
             moves.append(
-                assign_per_mission(sf.path, ts_local, catalog, bags_root)
+                assign_per_mission(
+                    sf.path, ts_local, catalog, bags_root,
+                    mission_subdir=mission_subdir,
+                )
             )
 
         elif sf.granularity == "per_date":

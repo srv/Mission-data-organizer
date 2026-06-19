@@ -133,12 +133,13 @@ def test_planner_attaches_utc_to_non_bag_filenames(tmp_path, monkeypatch):
     plan = pl.build_plan(bags_root, logs_root, MADRID)
     by_src = {m.src.name: m.dst for m in plan.moves}
 
-    mission_dir = bags_root / "2026_05_04" / "11_03_30"
-    assert by_src[s7k.name] == mission_dir / s7k.name, (
+    # Native sonar (.s7k from norbit_wbms_multibeam) lands under raw/.
+    raw_dir = bags_root / "2026_05_04" / "11_03_30" / "raw"
+    assert by_src[s7k.name] == raw_dir / s7k.name, (
         f"sensor file with UTC filename {s7k.name} should land in the "
-        f"mission folder; got {by_src[s7k.name]}"
+        f"mission raw/ folder; got {by_src[s7k.name]}"
     )
-    assert by_src[s7k2.name] == mission_dir / s7k2.name
+    assert by_src[s7k2.name] == raw_dir / s7k2.name
 
 
 def test_results_identical_on_utc_host_simulating_orat(tmp_path):
