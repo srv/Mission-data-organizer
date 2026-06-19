@@ -16,7 +16,8 @@ from mission_data_organizer.classifier import (
     Assignment,
     assign_anchor,
     assign_basic_bag,
-    assign_blackfly_folder,
+    assign_image_folder,
+    assign_mission_report,
     assign_per_date,
     assign_per_mission,
     canonicalize_bag_name,
@@ -217,6 +218,78 @@ def test_per_date(tmp_path):
     assert a.dst == tmp_path / "2026_05_04" / src.name
 
 
+# --- assign_per_date day_subdir (system_logs/ grouping — todo #19) ---
+
+def test_per_date_day_subdir_inserted(tmp_path):
+    """``day_subdir`` groups per-date daemon logs under <date>/<subdir>/."""
+    src = tmp_path / "20260504_090330_iquaview_server.log"
+    a = assign_per_date(
+        src, datetime(2026, 5, 4, tzinfo=UTC), tmp_path,
+        day_subdir="system_logs",
+    )
+    assert a.dst == tmp_path / "2026_05_04" / "system_logs" / src.name
+
+
+def test_per_date_rejects_non_component_subdir(tmp_path):
+    """A separator / absolute / empty ``day_subdir`` is rejected loudly."""
+    src = tmp_path / "x.log"
+    ts = datetime(2026, 5, 4, tzinfo=UTC)
+    for bad in ("a/b", "/abs", "", "sub/logs"):
+        with pytest.raises(ValueError):
+            assign_per_date(src, ts, tmp_path, day_subdir=bad)
+
+
+# --- assign_mission_report (content-aware window overlap — todo #8) ---
+
+def test_mission_report_overlap_places_in_mission(tmp_path, catalog):
+    """A report whose [Start, End] overlaps mission 1's bag window lands in
+    mission 1's root, even though its Start precedes the bag's internal start."""
+    src = tmp_path / "2026-05-04_09-03-30_mission_report.md"
+    window = (
+        datetime(2026, 5, 4, 9, 3, 25, tzinfo=UTC),   # before mission 1 start
+        datetime(2026, 5, 4, 9, 5, 0, tzinfo=UTC),
+    )
+    a = assign_mission_report(src, window, catalog, tmp_path, UTC)
+    assert a.dst == tmp_path / "2026_05_04" / "09_03_30" / src.name
+    assert a.note is None
+
+
+def test_mission_report_picks_largest_overlap(tmp_path, catalog):
+    """When a report spans into two missions, the one with the most overlap
+    wins (catalog mission 2 is 10:50:33–11:30:00)."""
+    src = tmp_path / "r.md"
+    window = (
+        datetime(2026, 5, 4, 11, 0, 0, tzinfo=UTC),
+        datetime(2026, 5, 4, 11, 20, 0, tzinfo=UTC),
+    )
+    a = assign_mission_report(src, window, catalog, tmp_path, UTC)
+    assert a.dst.parent.name == "10_50_33"
+
+
+def test_mission_report_no_overlap_demoted(tmp_path, catalog):
+    """A report overlapping no mission window is demoted to the day root,
+    keyed on its Start time converted to local TZ."""
+    src = tmp_path / "r.md"
+    window = (
+        datetime(2026, 5, 4, 14, 0, 0, tzinfo=UTC),
+        datetime(2026, 5, 4, 14, 30, 0, tzinfo=UTC),
+    )
+    a = assign_mission_report(src, window, catalog, tmp_path, UTC)
+    assert a.dst == tmp_path / "2026_05_04" / src.name
+    assert a.note is not None and "demoted" in a.note
+
+
+def test_mission_report_stub_zero_width_demoted(tmp_path):
+    """A zero-width stub window has no positive overlap, so the report demotes
+    (it never binds to an aborted mission)."""
+    stub_ts, cat = _stub_catalog(tmp_path)
+    src = tmp_path / "r.md"
+    window = (stub_ts, stub_ts)
+    a = assign_mission_report(src, window, cat, tmp_path, UTC)
+    assert a.dst == tmp_path / "2026_05_04" / src.name
+    assert a.note is not None and "demoted" in a.note
+
+
 def test_basic_bag_active_suffix_stripped(tmp_path):
     src = tmp_path / "sparus2_basic_2026-05-04-08-06-06_0.bag.active"
     a = assign_basic_bag(src, tmp_path, UTC)
@@ -252,14 +325,25 @@ def test_anchor_active_suffix_stripped(tmp_path):
     assert a.note == "active_suffix_stripped"
 
 
-def test_blackfly_folder_in_range(tmp_path, catalog):
+def test_image_folder_in_range(tmp_path, catalog):
+    """Default (no mission_subdir) places a camera folder at the mission root."""
     src = tmp_path / "2026-05-04-09-03-30"   # filename matches mission 1 anchor
-    a = assign_blackfly_folder(src, tmp_path, catalog, UTC)
+    a = assign_image_folder(src, tmp_path, catalog, UTC)
     assert a.dst == tmp_path / "2026_05_04" / "09_03_30" / src.name
 
 
-def test_blackfly_folder_orphan_demoted(tmp_path, catalog):
+def test_image_folder_under_raw(tmp_path, catalog):
+    """``mission_subdir="raw"`` routes the camera folder into the mission's
+    raw/ subfolder (how blackfly_s and flir_spinnaker_* are filed — todo #18)."""
+    src = tmp_path / "2026-05-04-09-03-30"
+    a = assign_image_folder(src, tmp_path, catalog, UTC, mission_subdir="raw")
+    assert a.dst == tmp_path / "2026_05_04" / "09_03_30" / "raw" / src.name
+
+
+def test_image_folder_orphan_demoted(tmp_path, catalog):
+    """A camera folder matching no mission is demoted to the day root (no
+    raw/ — a subfolder is a per-mission concept)."""
     src = tmp_path / "2026-05-04-15-00-00"
-    a = assign_blackfly_folder(src, tmp_path, catalog, UTC)
+    a = assign_image_folder(src, tmp_path, catalog, UTC, mission_subdir="raw")
     assert a.dst == tmp_path / "2026_05_04" / src.name
     assert a.note is not None and "demoted" in a.note

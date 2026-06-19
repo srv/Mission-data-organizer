@@ -4,7 +4,7 @@ The classifier never moves anything — it only computes destinations.
 
 Time-handling contract:
     - Helpers that parse a filename themselves (``assign_anchor``,
-      ``assign_basic_bag``, ``assign_blackfly_folder``) take a ``local_tz``
+      ``assign_basic_bag``, ``assign_image_folder``) take a ``local_tz``
       argument: they attach UTC to the parsed naive datetime (these
       filenames are all Orat-recorded, hence UTC) and then convert to
       ``local_tz`` for folder rendering.
@@ -74,6 +74,21 @@ def _join_notes(*notes: Optional[str]) -> Optional[str]:
     return "; ".join(parts) if parts else None
 
 
+def _require_single_component(value: Optional[str], label: str) -> None:
+    """Reject a path-component argument that is not a single component.
+
+    ``value`` is joined into a destination path; a separator, an absolute
+    path, or an empty string would silently relocate the file outside the
+    intended folder. Callers pass a hardcoded component (e.g. ``"raw"``,
+    ``"system_logs"``); a bad value is a programming error and must stop.
+    ``None`` is allowed (means "no subfolder") and is a no-op.
+    """
+    if value is not None and (value != Path(value).name or not value):
+        raise ValueError(
+            f"{label} must be a single path component, got {value!r}"
+        )
+
+
 def assign_per_mission(
     src: Path,
     src_timestamp: datetime,
@@ -108,16 +123,7 @@ def assign_per_mission(
     date folder is rendered from ``src_timestamp.strftime``, so callers who
     want a local-TZ date should pass a local-TZ-aware datetime).
     """
-    if mission_subdir is not None and (
-        mission_subdir != Path(mission_subdir).name or not mission_subdir
-    ):
-        # mission_subdir is joined into the destination path; a separator or an
-        # absolute/empty value would silently relocate the file outside the
-        # mission folder. Callers pass a hardcoded single component ("raw"); a
-        # bad value is a programming error and must stop, not pass silently.
-        raise ValueError(
-            f"mission_subdir must be a single path component, got {mission_subdir!r}"
-        )
+    _require_single_component(mission_subdir, "mission_subdir")
     name = dst_name or src.name
     tol = timedelta(seconds=MISSION_WINDOW_TOLERANCE_S)
     for mission in catalog:
@@ -207,18 +213,27 @@ def assign_per_date(
     bags_root: Path,
     dst_name: Optional[str] = None,
     extra_note: Optional[str] = None,
+    day_subdir: Optional[str] = None,
 ) -> Assignment:
-    """Return :class:`Assignment` to ``<bags-root>/YYYY_MM_DD/<dst_name or src.name>``.
+    """Return :class:`Assignment` to
+    ``<bags-root>/YYYY_MM_DD/[<day_subdir>/]<dst_name or src.name>``.
 
     The date folder is rendered from ``src_timestamp.strftime`` — callers
     wanting a local-TZ date folder must pass a local-TZ-aware datetime.
+
+    ``day_subdir``, when given, is inserted between the date folder and the
+    filename (e.g. ``"system_logs"`` for the per-date daemon logs). It is
+    validated as a single path component for the same reason as
+    ``mission_subdir`` in :func:`assign_per_mission` — a separator or empty
+    value would silently relocate the file.
     """
+    _require_single_component(day_subdir, "day_subdir")
     name = dst_name or src.name
-    return Assignment(
-        src=src,
-        dst=bags_root / date_folder_name(src_timestamp) / name,
-        note=extra_note,
-    )
+    dst = bags_root / date_folder_name(src_timestamp)
+    if day_subdir:
+        dst = dst / day_subdir
+    dst = dst / name
+    return Assignment(src=src, dst=dst, note=extra_note)
 
 
 def assign_basic_bag(
@@ -261,14 +276,17 @@ def assign_anchor(
     return Assignment(src=src, dst=dst, note=note)
 
 
-def assign_blackfly_folder(
+def assign_image_folder(
     src: Path,
     bags_root: Path,
     catalog: List[Mission],
     local_tz: tzinfo,
+    mission_subdir: Optional[str] = None,
 ) -> Optional[Assignment]:
-    """``blackfly_s/YYYY-MM-DD-HH-MM-SS/`` is moved as a whole folder into
-    the matching mission directory.
+    """A camera image folder ``<source>/YYYY-MM-DD-HH-MM-SS/`` (blackfly_s or
+    flir_spinnaker_*) is moved as a whole folder into the matching mission
+    directory, optionally under ``mission_subdir`` (``"raw"`` for raw camera
+    data — forwarded to :func:`assign_per_mission`).
 
     The folder name is recorded by the camera daemon on Orat (UTC), so the
     parsed naive timestamp is attached as UTC and then converted to
@@ -281,4 +299,60 @@ def assign_blackfly_folder(
     if ts_naive is None:
         return None
     ts_local = ts_naive.replace(tzinfo=timezone.utc).astimezone(local_tz)
-    return assign_per_mission(src, ts_local, catalog, bags_root)
+    return assign_per_mission(
+        src, ts_local, catalog, bags_root, mission_subdir=mission_subdir
+    )
+
+
+def assign_mission_report(
+    src: Path,
+    report_window: Tuple[datetime, datetime],
+    catalog: List[Mission],
+    bags_root: Path,
+    local_tz: tzinfo,
+    dst_name: Optional[str] = None,
+    extra_note: Optional[str] = None,
+) -> Assignment:
+    """Place a ``mission_report.md`` by **content-aware overlap**: pick the
+    mission whose bag-internal ``[start, end]`` window has the largest positive
+    overlap with the report's own ``[start, end]`` header span, and place the
+    report at that mission's **root** (reports are not raw data — no ``raw/``).
+
+    iquaview writes the report at mission-planning time, tens of seconds before
+    ``rosbag record`` captures its first message, so the report's filename TS
+    falls outside the bag window and filename matching would demote it (issue
+    #8). Overlapping the header span against the window bridges that gap and
+    also disambiguates retries (two reports sharing a ``Mission name``).
+
+    ``report_window`` and the catalog windows are both UTC-aware. A zero-width
+    stub/aborted window (``start == end``) yields zero overlap and therefore
+    never matches. With no positive overlap the report is **demoted** to the
+    day root (rendered from the report start converted to ``local_tz``).
+    """
+    rstart, rend = report_window
+    best_mission: Optional[Mission] = None
+    best_overlap: Optional[float] = None
+    for mission in catalog:
+        lo = max(mission.start, rstart)
+        hi = min(mission.end, rend)
+        overlap = (hi - lo).total_seconds()
+        if overlap > 0 and (best_overlap is None or overlap > best_overlap):
+            best_overlap = overlap
+            best_mission = mission
+    name = dst_name or src.name
+    if best_mission is not None:
+        dst = (
+            bags_root
+            / date_folder_name(best_mission.date)
+            / best_mission.folder_name
+            / name
+        )
+        return Assignment(src=src, dst=dst, note=extra_note)
+    # No overlapping mission — demote to the day root.
+    start_local = rstart.astimezone(local_tz)
+    dst = bags_root / date_folder_name(start_local) / name
+    return Assignment(
+        src=src,
+        dst=dst,
+        note=_join_notes(extra_note, DEMOTED_OUTSIDE_MISSION),
+    )

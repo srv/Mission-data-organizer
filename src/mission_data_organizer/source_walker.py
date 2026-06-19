@@ -10,6 +10,8 @@ from typing import Iterator, NamedTuple
 from .config import (
     BAG_SENSOR_MARKER_PER_DATE,
     BAG_SENSOR_MARKERS_PER_MISSION,
+    DAY_TEXT_MARKERS,
+    LOG_SOURCES_FOLDER_PER_MISSION,
     LOG_SOURCES_PER_DATE,
     LOG_SOURCES_PER_MISSION,
 )
@@ -19,10 +21,12 @@ class SourceFile(NamedTuple):
     path: Path
 
     # One of:
-    #   "anchor"            — main mission bag (defines a mission)
-    #   "per_mission"       — sensor bag, mission report, mk_ii, multibeam, etc.
-    #   "per_date"          — basic bag, emus_bms log
-    #   "blackfly_folder"   — whole folder under blackfly_s/
+    #   "anchor"          — main mission bag (defines a mission)
+    #   "per_mission"     — sensor bag, mk_ii, multibeam file
+    #   "per_date"        — basic bag, emus_bms / iquaview_server log
+    #   "image_folder"    — whole camera-image folder (blackfly_s, flir_*)
+    #   "mission_report"  — mission_reports/*.md (content-aware window pairing)
+    #   "day_text"        — root-level operator .txt note, filed by mtime
     granularity: str
 
 
@@ -38,6 +42,10 @@ def _classify_bag(name: str) -> str:
 def walk_bags_root(bags_root: Path) -> Iterator[SourceFile]:
     """Yield every bag file at ``<bags-root>`` (top level only — does not
     descend into already-organized ``YYYY_MM_DD/`` subtrees), tagged by family.
+
+    Also yields root-level operator ``.txt`` notes whose lowercased name
+    contains a :data:`~.config.DAY_TEXT_MARKERS` substring, tagged
+    ``"day_text"`` — these are filed into the day folder by file mtime.
     """
     if not bags_root.exists():
         return
@@ -45,11 +53,15 @@ def walk_bags_root(bags_root: Path) -> Iterator[SourceFile]:
         if not entry.is_file():
             continue
         name = entry.name
-        if not name.startswith("sparus2_"):
-            continue
-        if not (name.endswith(".bag") or name.endswith(".bag.active")):
-            continue
-        yield SourceFile(path=entry, granularity=_classify_bag(name))
+        lname = name.lower()
+        if name.startswith("sparus2_") and (
+            name.endswith(".bag") or name.endswith(".bag.active")
+        ):
+            yield SourceFile(path=entry, granularity=_classify_bag(name))
+        elif lname.endswith(".txt") and any(
+            marker in lname for marker in DAY_TEXT_MARKERS
+        ):
+            yield SourceFile(path=entry, granularity="day_text")
 
 
 def walk_logs_root(logs_root: Path) -> Iterator[SourceFile]:
@@ -57,8 +69,11 @@ def walk_logs_root(logs_root: Path) -> Iterator[SourceFile]:
     ``<logs-root>``. Out-of-scope subdirectories are silently skipped.
 
     Special cases:
-        - ``blackfly_s/`` yields its first-level *subfolders* (each is a
-          mission's worth of paired stereo images).
+        - Camera image folders (``blackfly_s/``, ``flir_spinnaker_*/``) yield
+          their first-level *subfolders* (each is a mission's worth of paired
+          stereo images), tagged ``"image_folder"``.
+        - ``mission_reports/`` files are tagged ``"mission_report"`` (placed by
+          content-aware window overlap, not filename TS).
         - All other in-scope sub-dirs yield *files* (any file regardless
           of extension — includes the extensionless ``_bathy_data_raw``
           siblings under ``norbit_wbms_multibeam/``).
@@ -66,22 +81,23 @@ def walk_logs_root(logs_root: Path) -> Iterator[SourceFile]:
     if not logs_root.exists():
         return
 
-    # blackfly_s — yield subfolders (each one is a mission)
-    bf = logs_root / "blackfly_s"
-    if bf.is_dir():
-        for sub in sorted(bf.iterdir()):
-            if sub.is_dir():
-                yield SourceFile(path=sub, granularity="blackfly_folder")
-
-    # Per-mission file sources.
-    for sub_name in LOG_SOURCES_PER_MISSION:
-        if sub_name == "blackfly_s":
-            continue  # handled above as folders
+    # Camera image folders — yield each first-level subfolder (one per mission).
+    for sub_name in LOG_SOURCES_FOLDER_PER_MISSION:
         sub = logs_root / sub_name
         if sub.is_dir():
+            for folder in sorted(sub.iterdir()):
+                if folder.is_dir():
+                    yield SourceFile(path=folder, granularity="image_folder")
+
+    # Per-mission file sources. mission_reports get their own granularity so the
+    # planner pairs them by report-window overlap rather than filename TS.
+    for sub_name in LOG_SOURCES_PER_MISSION:
+        sub = logs_root / sub_name
+        if sub.is_dir():
+            tag = "mission_report" if sub_name == "mission_reports" else "per_mission"
             for f in sorted(sub.iterdir()):
                 if f.is_file():
-                    yield SourceFile(path=f, granularity="per_mission")
+                    yield SourceFile(path=f, granularity=tag)
 
     # Per-date file sources.
     for sub_name in LOG_SOURCES_PER_DATE:

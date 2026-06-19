@@ -31,14 +31,16 @@ from .classifier import (
     Assignment,
     assign_anchor,
     assign_basic_bag,
-    assign_blackfly_folder,
     assign_companion_bag,
+    assign_image_folder,
+    assign_mission_report,
     assign_per_date,
     assign_per_mission,
     canonicalize_bag_name,
 )
-from .config import RAW_NATIVE_SOURCES
+from .config import RAW_NATIVE_SOURCES, SYSTEM_LOG_SUBDIR
 from .mission_catalog import build_catalog
+from .report_inspector import parse_report_window
 from .source_walker import walk_bags_root, walk_logs_root
 from .timestamp_parser import parse_any, parse_bag_timestamp
 
@@ -132,16 +134,62 @@ def build_plan(
                 continue
             moves.append(a)
 
+        elif sf.granularity == "day_text":
+            # Operator .txt note → day folder, keyed by file mtime (the
+            # filename date is irregular or absent). mtime is a POSIX epoch
+            # (UTC); convert to local_tz so the date folder matches convention.
+            mtime = datetime.fromtimestamp(
+                sf.path.stat().st_mtime, tz=timezone.utc
+            ).astimezone(local_tz)
+            moves.append(assign_per_date(sf.path, mtime, bags_root))
+
     # ---- logs ----
     for sf in walk_logs_root(logs_root):
-        if sf.granularity == "blackfly_folder":
-            a = assign_blackfly_folder(sf.path, bags_root, catalog, local_tz)
+        if sf.granularity == "image_folder":
+            # Camera image folders are raw sensor data → mission's raw/
+            # subfolder. Source-driver keyed (parent dir name) so the routing
+            # rule lives in one place; a folder matching no mission is demoted.
+            mission_subdir = (
+                "raw" if sf.path.parent.name in RAW_NATIVE_SOURCES else None
+            )
+            a = assign_image_folder(
+                sf.path, bags_root, catalog, local_tz,
+                mission_subdir=mission_subdir,
+            )
             if a is None:
                 warnings.append(
                     f"Cannot parse timestamp from {sf.path.name}, skipping"
                 )
                 continue
             moves.append(a)
+
+        elif sf.granularity == "mission_report":
+            # Content-aware pairing (#8): read the report's Start/End header and
+            # place it in the mission whose bag window overlaps that span. If
+            # the header is unreadable, fall back to filename-TS matching at the
+            # mission root so the file is never lost.
+            window = parse_report_window(sf.path)
+            if window is not None:
+                moves.append(
+                    assign_mission_report(
+                        sf.path, window, catalog, bags_root, local_tz
+                    )
+                )
+                continue
+            ts_naive = parse_any(sf.path.name)
+            if ts_naive is None:
+                warnings.append(
+                    f"Cannot parse timestamp from {sf.path.name}, skipping"
+                )
+                continue
+            warnings.append(
+                f"{sf.path.name}: report header unreadable, "
+                f"fell back to filename-TS matching"
+            )
+            ts_local = ts_naive.replace(tzinfo=timezone.utc).astimezone(local_tz)
+            moves.append(
+                assign_per_mission(sf.path, ts_local, catalog, bags_root)
+            )
 
         elif sf.granularity == "per_mission":
             ts_naive = parse_any(sf.path.name)
@@ -172,7 +220,14 @@ def build_plan(
                 )
                 continue
             ts_local = ts_naive.replace(tzinfo=timezone.utc).astimezone(local_tz)
-            moves.append(assign_per_date(sf.path, ts_local, bags_root))
+            # Per-date daemon logs (emus_bms, iquaview_server) are grouped under
+            # <date>/system_logs/. Basic bags and operator .txt notes also use
+            # assign_per_date but WITHOUT day_subdir, so they stay at the day root.
+            moves.append(
+                assign_per_date(
+                    sf.path, ts_local, bags_root, day_subdir=SYSTEM_LOG_SUBDIR
+                )
+            )
 
     # ---- validation ----
     seen = {}

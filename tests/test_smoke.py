@@ -55,10 +55,11 @@ def test_build_plan_produces_expected_layout(generated):
     assert by_src["2026-05-04_09-03-32_0.s7k"] == m1 / "raw" / "2026-05-04_09-03-32_0.s7k"
     assert by_src["2026-05-04_09-03-32_bathy_data_raw"] == m1 / "raw" / "2026-05-04_09-03-32_bathy_data_raw"
     assert by_src["2026-05-04_09-03-32_snippet_sidescan_raw"] == m1 / "raw" / "2026-05-04_09-03-32_snippet_sidescan_raw"
+    # Mission report paired by content-aware window overlap (its header Start is
+    # 09:03:25 — before the bag's internal start — yet it lands in mission 1).
     assert by_src["2026-05-04_09-03-30_mission_report.md"] == m1 / "2026-05-04_09-03-30_mission_report.md"
-    assert by_src["20260504_090330_iquaview_server.log"] == m1 / "20260504_090330_iquaview_server.log"
-    # blackfly_s folder for mission 1 (whole folder moves)
-    assert by_src["2026-05-04-09-03-30"] == m1 / "2026-05-04-09-03-30"
+    # blackfly_s folder for mission 1 (whole folder moves) → mission raw/.
+    assert by_src["2026-05-04-09-03-30"] == m1 / "raw" / "2026-05-04-09-03-30"
 
     # --- Mission 2 anchor + stereo split ---
     m2 = bags_root / "2026_05_04" / "10_50_33"
@@ -72,17 +73,26 @@ def test_build_plan_produces_expected_layout(generated):
     assert by_src["2026-05-04_10-51-00_0.xtf"] == m2 / "raw" / "2026-05-04_10-51-00_0.xtf"
     assert by_src["2026-05-04_10-51-30_0.s7k"] == m2 / "raw" / "2026-05-04_10-51-30_0.s7k"
     assert by_src["2026-05-04_10-50-33_mission_report.md"] == m2 / "2026-05-04_10-50-33_mission_report.md"
+    # FLIR stereo image folder for mission 2 → mission raw/.
+    assert by_src["2026-05-04-10-50-33"] == m2 / "raw" / "2026-05-04-10-50-33"
 
-    # --- Per-date items (basic bags, emus_bms) ---
+    # --- Per-date items (basic bags at the day root; logs under system_logs/) ---
     date_dir = bags_root / "2026_05_04"
+    system_logs = date_dir / "system_logs"
     assert by_src["sparus2_basic_2026-05-04-08-00-00_0.bag"] == date_dir / "sparus2_basic_2026-05-04-08-00-00_0.bag"
     # .bag.active gets the .active stripped on move.
     active_assignment = next(m for m in plan.moves
                              if m.src.name == "sparus2_basic_2026-05-04-07-30-00_0.bag.active")
     assert active_assignment.dst == date_dir / "sparus2_basic_2026-05-04-07-30-00_0.bag"
     assert active_assignment.note == "active_suffix_stripped"
-    assert by_src["bms_events_00004CFB_2026_05_04.log"] == date_dir / "bms_events_00004CFB_2026_05_04.log"
-    assert by_src["bms_statistics_00004CFB_2026_05_04.csv"] == date_dir / "bms_statistics_00004CFB_2026_05_04.csv"
+    # Day-spanning daemon logs (emus_bms battery + iquaview server) → system_logs/.
+    assert by_src["bms_events_00004CFB_2026_05_04.log"] == system_logs / "bms_events_00004CFB_2026_05_04.log"
+    assert by_src["bms_statistics_00004CFB_2026_05_04.csv"] == system_logs / "bms_statistics_00004CFB_2026_05_04.csv"
+    assert by_src["20260504_090330_iquaview_server.log"] == system_logs / "20260504_090330_iquaview_server.log"
+    # Operator .txt notes → day root, keyed by file mtime (2026-05-04 midday UTC).
+    assert by_src["2026-05-04_ondeck.txt"] == date_dir / "2026-05-04_ondeck.txt"
+    assert by_src["2026-05-04_onwater.txt"] == date_dir / "2026-05-04_onwater.txt"
+    assert by_src["README.txt"] == date_dir / "README.txt"
 
 
 def test_apply_plan_then_idempotent_rerun(generated):
@@ -112,15 +122,13 @@ def test_apply_plan_then_idempotent_rerun(generated):
 
 
 def test_out_of_scope_dirs_not_touched(generated):
-    """cola2_log/shutdown_logger.txt and the empty Spinnaker dirs must be
-    invisible to the planner."""
+    """cola2_log/shutdown_logger.txt must be invisible to the planner. (FLIR
+    folders are now in scope and routed to mission raw/ — see the layout test.)"""
     from mission_data_organizer.planner import build_plan
 
     plan = build_plan(generated / "bags", generated / "logs", timezone.utc)
     src_paths = {str(m.src) for m in plan.moves}
     assert not any("cola2_log" in s for s in src_paths)
-    assert not any("flir_spinnaker_camera" in s for s in src_paths)
-    assert not any("flir_spinnaker_stereo_camera" in s for s in src_paths)
 
 
 def test_undo_round_trip(generated):

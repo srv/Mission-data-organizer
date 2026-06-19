@@ -10,8 +10,11 @@ After every mission, the vehicle drops bagfiles into `/home/user/bags/` and per-
 /home/user/bags/
 ├── YYYY_MM_DD/                                  # date folder
 │   ├── sparus2_basic_*.bag                      # boot/shutdown bags (per-day, not per-mission)
-│   ├── bms_<events|statistics>_<HEX>_YYYY_MM_DD.{log,csv}   # battery logs (per-day)
+│   ├── <operator .txt notes (ondeck/onwater/readme)>   # from <bags-root>/, day from mtime
 │   ├── <orphan files matched only by date>
+│   ├── system_logs/                             # day-spanning daemon logs
+│   │   ├── bms_<events|statistics>_<HEX>_YYYY_MM_DD.{log,csv}   # battery logs
+│   │   └── YYYYMMDD_HHMMSS_iquaview_server.log                   # iquaview daemon log
 │   └── HH_MM_SS/                                # mission folder, named in `--local-tz`
 │       ├── sparus2_*.bag                        # main mission bag (the anchor)
 │       ├── sparus2_camera_*.bag
@@ -19,14 +22,15 @@ After every mission, the vehicle drops bagfiles into `/home/user/bags/` and per-
 │       ├── sparus2_sidescan_*.bag
 │       ├── sparus2_stereo_camera_*_{0,1,...}.bag       # stereo splits (multiple parts share the mission)
 │       ├── YYYY-MM-DD_HH-MM-SS_mission_report.md       # from /home/user/logs/mission_reports/
-│       ├── YYYYMMDD_HHMMSS_iquaview_server.log         # from /home/user/logs/iquaview_server/
-│       ├── YYYY-MM-DD-HH-MM-SS/                 # whole stereo-image folder from /home/user/logs/blackfly_s/
-│       └── raw/                                 # native sonar recordings, grouped together
+│       └── raw/                                 # native sonar recordings + camera image folders
 │           ├── *.xtf, *.SDS                     # sidescan files from /home/user/logs/mk_ii/
 │           ├── *.s7k                            # multibeam files from /home/user/logs/norbit_wbms_multibeam/
 │           ├── *_bathy_data_raw                 # multibeam raw siblings (no extension), same source
 │           ├── *_snippet_sidescan_raw
-│           └── *_water_column_raw
+│           ├── *_water_column_raw
+│           ├── YYYY-MM-DD-HH-MM-SS/             # stereo-image folder from /home/user/logs/blackfly_s/
+│           ├── YYYY-MM-DD-HH-MM-SS/             # stereo-image folder from /home/user/logs/flir_spinnaker_camera/
+│           └── YYYY-MM-DD-HH-MM-SS/             # stereo-image folder from /home/user/logs/flir_spinnaker_stereo_camera/
 └── .organize_log/<run-timestamp>.log            # audit trail of every run
 ```
 
@@ -38,16 +42,18 @@ After every mission, the vehicle drops bagfiles into `/home/user/bags/` and per-
 | `/home/user/bags/sparus2_<camera|multibeam|sidescan|stereo_camera>_*.bag` | per-mission | mission folder |
 | `/home/user/bags/sparus2_*.bag.active` | per-mission or per-date | mission/date folder; `.active` suffix is stripped on move and a warning is emitted to stderr (an `.active` file usually indicates a previous unclean shutdown) |
 | `/home/user/bags/sparus2_basic_*.bag` | per-date | date folder |
-| `/home/user/logs/blackfly_s/<YYYY-MM-DD-HH-MM-SS>/` | per-mission (whole folder) | mission folder |
-| `/home/user/logs/emus_bms/bms_*_<HEX>_YYYY_MM_DD.{log,csv}` | per-date | date folder |
-| `/home/user/logs/iquaview_server/YYYYMMDD_HHMMSS_*.log` | per-mission | mission folder |
-| `/home/user/logs/mission_reports/YYYY-MM-DD_HH-MM-SS_*.md` | per-mission | mission folder |
+| Operator `.txt` notes in `<bags-root>/` whose name (case-insensitive) contains `ondeck`, `onwater`, or `readme` | per-date | date folder (day from file mtime) |
+| `/home/user/logs/blackfly_s/<YYYY-MM-DD-HH-MM-SS>/` | per-mission (whole folder) | mission folder, under `raw/` |
+| `/home/user/logs/flir_spinnaker_camera/<YYYY-MM-DD-HH-MM-SS>/` | per-mission (whole folder) | mission folder, under `raw/` |
+| `/home/user/logs/flir_spinnaker_stereo_camera/<YYYY-MM-DD-HH-MM-SS>/` | per-mission (whole folder) | mission folder, under `raw/` |
+| `/home/user/logs/emus_bms/bms_*_<HEX>_YYYY_MM_DD.{log,csv}` | per-date | date `system_logs/` subfolder |
+| `/home/user/logs/iquaview_server/YYYYMMDD_HHMMSS_*.log` | per-date | date `system_logs/` subfolder |
+| `/home/user/logs/mission_reports/YYYY-MM-DD_HH-MM-SS_*.md` | per-mission | mission root |
 | `/home/user/logs/mk_ii/*` (`.xtf`, `.SDS`, prefix `YYYY-MM-DD_HH-MM-SS_N`) | per-mission | mission folder, under `raw/` |
 | `/home/user/logs/norbit_wbms_multibeam/*` (every file regardless of extension; prefix `YYYY-MM-DD_HH-MM-SS_*`) | per-mission | mission folder, under `raw/` |
 | `/home/user/logs/cola2_log/shutdown_logger.txt` | continuous | **out of scope — never touched** |
-| `/home/user/logs/flir_spinnaker_camera/`, `/home/user/logs/flir_spinnaker_stereo_camera/` | empty | nothing to do |
 
-The native sonar recordings — everything from `mk_ii/` and `norbit_wbms_multibeam/` — are grouped together under a `raw/` subfolder inside each mission folder, keeping the mission root for the bags, the mission report, and any later-derived products. The ROS bags are never moved into `raw/`.
+The sonar recordings (`mk_ii/`, `norbit_wbms_multibeam/`) and camera image folders (`blackfly_s/`, `flir_spinnaker_camera/`, `flir_spinnaker_stereo_camera/`) are all grouped under a `raw/` subfolder inside each mission folder. The mission root holds only ROS bags and the mission report. The ROS bags are never moved into `raw/`.
 
 ## How sensor data is paired with missions
 
@@ -72,9 +78,12 @@ A stub anchor (4-KB header-only bag from an aborted `rosbag record`) cannot have
 | `sparus2_<sensor>_<TS>_<N>.bag` (camera / multibeam / sidescan / stereo_camera) | **Filename-match first** to the anchor with the closest filename TS, within ±1 s — these companions are siblings of the anchor by construction (same `rosbag record` launcher), but their filename TS can be ±1 s off when parallel process-start instants straddle a second boundary. Internal-time containment is used only as a fallback for split continuations (see next row). |
 | `sparus2_<sensor>_<NEW-TS>_<N>.bag` where `N > 0` (split continuation) | Filename TS differs from any anchor's. Falls through to **internal-time containment**: the bag's own `start_time` (UTC) must lie inside some mission's `[start, end]` window. |
 | `sparus2_basic_<TS>_<N>.bag` | Always at the date level (per-date), never inside a mission folder. |
-| `.xtf`, `.SDS`, `.s7k`, `*_bathy_data_raw`, `*_snippet_sidescan_raw`, `mission_report*`, `iquaview_server*` | Filename TS is parsed and **interpreted as UTC**. Every driver that writes these files (mk_ii sidescan, Norbit multibeam, iquaview server) runs on the AUV's onboard computer itself, whose clock is UTC; the filename string therefore carries a UTC face. After parsing, the TS is compared against the bag's internal UTC `[start, end]` window — both sides UTC, match is unambiguous. The window is matched with a small symmetric tolerance (≈2 s) for real missions, so a sonar file written in the brief gap between `rosbag record` starting and the bag's first recorded message still pairs with its mission rather than being demoted. The sonar files (mk_ii, Norbit) land under the mission's `raw/` subfolder; the mission report and iquaview log stay at the mission root. |
-| `blackfly_s/<YYYY-MM-DD-HH-MM-SS>/` (whole folder) | Folder name TS is **interpreted as UTC** (the camera daemon runs on Orat, whose clock is UTC). Matched against bag internal UTC windows the same way. |
-| `bms_*_<HEX>_<YYYY_MM_DD>.{log,csv}` | Date-only (no time). Always at the date level. |
+| Operator `.txt` note (name contains `ondeck`, `onwater`, or `readme`, case-insensitive) | Day is derived from the file's **modification time (mtime)**; the file lands in the date folder (not in `system_logs/`). |
+| `.xtf`, `.SDS`, `.s7k`, `*_bathy_data_raw`, `*_snippet_sidescan_raw` | Filename TS is parsed and **interpreted as UTC**. Every driver that writes these files (mk_ii sidescan, Norbit multibeam) runs on the AUV's onboard computer itself, whose clock is UTC; the filename string therefore carries a UTC face. After parsing, the TS is compared against the bag's internal UTC `[start, end]` window — both sides UTC, match is unambiguous. The window is matched with a small symmetric tolerance (≈2 s) for real missions, so a sonar file written in the brief gap between `rosbag record` starting and the bag's first recorded message still pairs with its mission rather than being demoted. These files land under the mission's `raw/` subfolder. |
+| `mission_report*.md` | The report's `- Start time:` / `- End time:` header lines (format `YYYY/MM/DD HH:MM:SS`, UTC) are read and the report is placed in the mission whose bag-internal `[start, end]` window has the largest positive overlap with the report's `[Start, End]` span. The report lands at the mission root (not `raw/`). If no mission window overlaps (including zero-width stub/aborted missions), the report is demoted to the date folder. If the header cannot be read, falls back to matching by the report's filename TS. |
+| `iquaview_server*.log` | Day-spanning daemon log. Always at the date level, under `system_logs/`. Never matched per-mission. |
+| `blackfly_s/<YYYY-MM-DD-HH-MM-SS>/`, `flir_spinnaker_camera/<YYYY-MM-DD-HH-MM-SS>/`, `flir_spinnaker_stereo_camera/<YYYY-MM-DD-HH-MM-SS>/` (whole folders) | Folder name TS is **interpreted as UTC** (the camera daemon runs on Orat, whose clock is UTC). Matched against bag internal UTC windows the same way as sonar files. Land under the mission's `raw/` subfolder. |
+| `bms_*_<HEX>_<YYYY_MM_DD>.{log,csv}` | Date-only (no time). Always at the date level, under `system_logs/`. |
 
 ### Why companions match by filename, not by internal time
 
@@ -90,14 +99,16 @@ For sensor companion bags specifically, the policy is **warn + skip**: if a comp
 
 ## Naming format reference
 
-The tool understands four timestamp dialects:
+The tool understands the following timestamp dialects:
 
 | Dialect | Example | Used by |
 |---|---|---|
-| `YYYY-MM-DD-HH-MM-SS` | `2026-05-04-09-03-30` | bag filenames; `blackfly_s/<folder>` names |
+| `YYYY-MM-DD-HH-MM-SS` | `2026-05-04-09-03-30` | bag filenames; `blackfly_s/`, `flir_spinnaker_camera/`, `flir_spinnaker_stereo_camera/` folder names |
 | `YYYY-MM-DD_HH-MM-SS` | `2026-05-04_09-03-30` | `mk_ii/`, `norbit_wbms_multibeam/`, `mission_reports/` |
 | `YYYYMMDD_HHMMSS`     | `20260504_090330`   | `iquaview_server/` |
 | `YYYY_MM_DD`          | `2026_05_04`        | `emus_bms/` (date-only) and the destination date folders |
+| `YYYY/MM/DD HH:MM:SS` | `2026/05/04 09:03:30` | mission report `- Start time:` / `- End time:` header lines (content-based matching) |
+| mtime (filesystem)    | —                   | operator `.txt` notes (no reliable filename timestamp) |
 
 ## Time handling
 
@@ -107,7 +118,7 @@ Three independent time sources flow through the script. Distinguishing them is t
 |---|---|---|
 | Bag-internal timestamps (Unix epoch inside the `.bag` file) | **UTC** (always — Unix time is UTC by definition) | Read as UTC-aware `datetime` via `datetime.fromtimestamp(epoch, tz=timezone.utc)`. Independent of the host's clock. |
 | Bag filenames (anchor, sensor companions, `sparus2_basic_*`, `blackfly_s/<TS>/`) | **UTC** | All recorded on the AUV's onboard computer (Orat), whose system clock is UTC by deployment policy. Attached as `tzinfo=timezone.utc` at parse time. Hardcoded — no CLI option. |
-| Non-bag sensor filenames (`.s7k`, `mission_reports/*`, `iquaview_server/*`, `mk_ii/*`) | **UTC** | The driver for every non-bag source runs on the AUV's onboard computer (Orat), whose clock is UTC. Attached as `tzinfo=timezone.utc` at parse time, then converted to `--local-tz` for the demote-path date folder rendering. |
+| Non-bag sensor filenames (`.s7k`, `mission_reports/*`, `iquaview_server/*`, `mk_ii/*`, camera image folder names) | **UTC** | The driver for every non-bag source runs on the AUV's onboard computer (Orat), whose clock is UTC. Attached as `tzinfo=timezone.utc` at parse time, then converted to `--local-tz` for the demote-path date folder rendering. |
 
 Comparisons across these sources happen between TZ-aware datetimes; Python normalises to UTC internally so the script's behaviour does not depend on the host's TZ setting.
 
@@ -123,7 +134,7 @@ The script tolerates a handful of imperfect-input conditions, each with a specif
 - **`.bag.active` unfinished file**: stripped to `.bag` on move; a `WARNING: ... has .bag.active suffix; will rename to .bag (likely from a previous unclean shutdown)` line is emitted.
 - **Split continuation (`_1`, `_2`, …)**: matched to the mission whose internal window contains the split's own internal start. The split's filename TS is later than the anchor's by design.
 - **Sensor companion with no matching anchor and no internal-time hit**: `WARNING: Skipping <name>: no anchor matches by filename and internal start <TS> falls outside every mission`. The file is left at its original location (not demoted) for manual triage — see the "warn + skip" policy in the matching rules.
-- **Non-bag sensor file or `blackfly_s/` folder whose timestamp falls outside every mission window**: demoted to `<date>/<file>`. Appears in the audit log with `demoted: timestamp outside any mission`. Some demotions are legitimate (between-mission sensor activity, dates with no anchor); a high count is worth inspecting against the run's mental model of the input data.
+- **Non-bag sensor file or camera image folder whose timestamp falls outside every mission window**: demoted to `<date>/<file>`. Appears in the audit log with `demoted: timestamp outside any mission`. Some demotions are legitimate (between-mission sensor activity, dates with no anchor); a high count is worth inspecting against the run's mental model of the input data.
 - **Date with no anchor**: every per-mission sensor file for that date is demoted (correctly — no mission exists). Visible as a `<date>/` folder with files at the top level and no `<HH_MM_SS>/` subfolders.
 - **Collision (two sources mapping to the same destination)**: hard error; the script refuses to apply any move from the plan. Both source files are listed.
 - **Pre-existing destination**: hard error; refuses to overwrite.
@@ -227,7 +238,6 @@ model of the input data predicts.
 ## Out of scope
 
 - `/home/user/logs/cola2_log/shutdown_logger.txt` — a single ever-growing log of boot/shutdown events. It cannot be split per mission and is never touched.
-- The empty `/home/user/logs/flir_spinnaker_camera/` and `/home/user/logs/flir_spinnaker_stereo_camera/` directories.
 - Anything outside `<bags-root>` and `<logs-root>`.
 
 ## Development
@@ -242,7 +252,7 @@ mission_data_organizer/
 │   ├── organize_mission_data.py           # entry point (put src/ on $PATH to deploy)
 │   └── mission_data_organizer/            # importable Python package
 │       ├── config.py                      # default paths and constants
-│       ├── timestamp_parser.py            # the four filename dialects
+│       ├── timestamp_parser.py            # filename and content timestamp dialects
 │       ├── bag_inspector.py               # pure-Python ROS bag v2.0 parser
 │       ├── mission_catalog.py             # mission anchors → mission list
 │       ├── classifier.py                  # source file → destination
